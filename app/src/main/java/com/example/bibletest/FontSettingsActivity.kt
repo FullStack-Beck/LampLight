@@ -20,6 +20,8 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.gson.Gson
 import java.io.InputStreamReader
+import android.graphics.drawable.GradientDrawable
+import android.view.View
 
 class FontSettingsActivity : AppCompatActivity() {
 
@@ -142,36 +144,177 @@ class FontSettingsActivity : AppCompatActivity() {
         }
     }
 
+
+
     private fun showAddThemeDialog() {
-        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_add_theme, null)
 
-        val nameInput = dialogView.findViewById<EditText>(R.id.theme_name)
-        val bgInput = dialogView.findViewById<EditText>(R.id.background_color)
-        val textInput = dialogView.findViewById<EditText>(R.id.text_color)
-        val redInput = dialogView.findViewById<EditText>(R.id.red_letter_color)
-        val borderInput = dialogView.findViewById<EditText>(R.id.border_color)
+        // ── Working color state ──────────────────────────────────────────────────
+        var bgColor    = selectedTheme.backgroundColor
+        var txtColor   = selectedTheme.textColor
+        var redColor   = selectedTheme.redLetterColor
+        var brdColor   = selectedTheme.borderColor
 
+        // ── Root layout ──────────────────────────────────────────────────────────
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(40, 40, 40, 24)
+        }
+
+        // ── Theme name input ─────────────────────────────────────────────────────
+        val nameInput = EditText(this).apply {
+            hint = "Theme name"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 20 }
+        }
+        root.addView(nameInput)
+
+        // ── Mini page preview ────────────────────────────────────────────────────
+        // Outer card (represents the phone screen / page border)
+        val previewCard = android.widget.FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 220
+            ).apply { bottomMargin = 24 }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 16f
+                setStroke(4, brdColor)
+                setColor(bgColor)
+            }
+            setPadding(20, 16, 20, 16)
+        }
+
+        // Simulated chapter number (big drop-cap style)
+        val previewChapter = TextView(this).apply {
+            text = "1"
+            textSize = 36f
+            typeface = android.graphics.Typeface.SERIF
+            setTextColor(txtColor)
+            gravity = android.view.Gravity.CENTER
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = android.view.Gravity.TOP }
+        }
+
+        // Simulated verse lines
+        val previewVerses = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = android.view.Gravity.BOTTOM
+                bottomMargin = 0
+                topMargin = 80  // push below chapter number
+            }
+        }
+
+        fun makeVerseLine(text: String, color: Int, size: Float = 13f): TextView =
+            TextView(this).apply {
+                this.text = text
+                textSize = size
+                setTextColor(color)
+                typeface = android.graphics.Typeface.SERIF
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 4 }
+            }
+
+        val line1 = makeVerseLine("¹ In the beginning was the Word, and", txtColor)
+        val line2 = makeVerseLine("² He was with God in the beginning.", txtColor)
+        val line3 = makeVerseLine("³ \u201cI am the way,\u201d said Jesus.", redColor) // red letter sample
+        previewVerses.addView(line1)
+        previewVerses.addView(line2)
+        previewVerses.addView(line3)
+
+        previewCard.addView(previewChapter)
+        previewCard.addView(previewVerses)
+        root.addView(previewCard)
+
+        // Helper to refresh the preview whenever a color changes
+        fun refreshPreview() {
+            (previewCard.background as GradientDrawable).apply {
+                setColor(bgColor)
+                setStroke(4, brdColor)
+            }
+            previewChapter.setTextColor(txtColor)
+            line1.setTextColor(txtColor)
+            line2.setTextColor(txtColor)
+            line3.setTextColor(redColor)
+        }
+
+        // ── Color swatch row builder ─────────────────────────────────────────────
+        fun colorSwatchRow(label: String, getColor: () -> Int, setColor: (Int) -> Unit): LinearLayout {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 16 }
+            }
+
+            val lbl = TextView(this).apply {
+                text = label
+                textSize = 14f
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+
+            val swatchParams = LinearLayout.LayoutParams(48, 48)
+            swatchParams.marginStart = 12
+
+            val swatch = View(this).apply {
+                layoutParams = swatchParams
+
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(getColor())
+                    setStroke(2, 0xFF888888.toInt())
+                }
+            }
+
+            row.addView(lbl)
+            row.addView(swatch)
+
+            row.setOnClickListener {
+                ColorPickerDialog(this, getColor()) { picked ->
+                    setColor(picked)
+                    (swatch.background as GradientDrawable).setColor(picked)
+                    refreshPreview()
+                }.show()
+            }
+
+            return row
+        }
+
+        root.addView(colorSwatchRow("Background",  { bgColor  }, { bgColor  = it }))
+        root.addView(colorSwatchRow("Text",        { txtColor }, { txtColor = it }))
+        root.addView(colorSwatchRow("Red Letters", { redColor }, { redColor = it }))
+        root.addView(colorSwatchRow("Border",      { brdColor }, { brdColor = it }))
+
+        // ── Show dialog ──────────────────────────────────────────────────────────
         android.app.AlertDialog.Builder(this)
             .setTitle("Create Theme")
-            .setView(dialogView)
+            .setView(root)
             .setPositiveButton("Save") { _, _ ->
-                try {
-                    val newTheme = AppTheme(
-                        name = nameInput.text.toString().ifBlank { "Custom ${allThemes.size + 1}" },
-                        backgroundColor = Color.parseColor(bgInput.text.toString().ifBlank { "#000000" }),
-                        textColor = Color.parseColor(textInput.text.toString().ifBlank { "#FFFFFF" }),
-                        redLetterColor = Color.parseColor(redInput.text.toString().ifBlank { "#FF5555" }),
-                        borderColor = Color.parseColor(borderInput.text.toString().ifBlank { "#888888" })
-                    )
-                    allThemes.add(newTheme)
-                    SettingsManager.saveCustomThemes(
-                        this,
-                        allThemes.filter { !prebuiltThemes.contains(it) }
-                    )
-                    themeSelectorRecycler.adapter?.notifyDataSetChanged()
-                } catch (e: IllegalArgumentException) {
-                    Toast.makeText(this, "Invalid color format. Use #RRGGBB.", Toast.LENGTH_SHORT).show()
-                }
+                val name = nameInput.text.toString().ifBlank { "Custom ${allThemes.size + 1}" }
+                val newTheme = AppTheme(
+                    name        = name,
+                    backgroundColor = bgColor,
+                    textColor   = txtColor,
+                    redLetterColor  = redColor,
+                    borderColor = brdColor
+                )
+                allThemes.add(newTheme)
+                SettingsManager.saveCustomThemes(
+                    this,
+                    allThemes.filter { t -> !prebuiltThemes.contains(t) }
+                )
+                themeSelectorRecycler.adapter?.notifyDataSetChanged()
             }
             .setNegativeButton("Cancel", null)
             .show()
