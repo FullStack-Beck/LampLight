@@ -1,6 +1,5 @@
 package com.example.bibletest
 
-import android.graphics.Color
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.UnderlineSpan
@@ -8,7 +7,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
-import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 
 // Represents different types of items in the list
@@ -18,16 +16,16 @@ sealed class BibleListItem {
     data class VerseItem(val bookName: String, val chapter: Int, val verseNumber: Int) : BibleListItem()
 }
 
-// Adapter takes a list of book names and a click callback
+// Adapter now depends on repository instead of JSON
 class BookAdapter(
-    private val kjvData: BibleData
+    private val repository: BibleRepository,
+    private val activity: MainActivity
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private val expandedBooks = mutableSetOf<String>()
     private val expandedChapters = mutableSetOf<Pair<String, Int>>()
 
     private var items: List<BibleListItem> = buildListFromData()
-
 
     fun rebuildList() {
         items = buildListFromData()
@@ -40,31 +38,45 @@ class BookAdapter(
         rebuildList()
     }
 
+    // ---------------- CORE CHANGE ----------------
     private fun buildListFromData(): List<BibleListItem> {
         val result = mutableListOf<BibleListItem>()
-        val verses = kjvData.verses
-        val books = verses.map { it.bookName }.distinct()
+
+        val books = repository.getBooks()
 
         for (book in books) {
             result.add(BibleListItem.BookItem(book))
+
             if (expandedBooks.contains(book)) {
-                val chapters = verses.filter { it.bookName == book }.map { it.chapter }.distinct().sorted()
+                val chapters = repository.getChapters(book)
+
                 for (chapter in chapters) {
                     result.add(BibleListItem.ChapterItem(book, chapter))
+
                     if (expandedChapters.contains(book to chapter)) {
-                        val versesInChapter = verses.filter { it.bookName == book && it.chapter == chapter }
-                        for (v in versesInChapter) {
-                            result.add(BibleListItem.VerseItem(book, chapter, v.verse))
+                        val verses = repository.getVerses(book, chapter)
+
+                        for (v in verses) {
+                            result.add(
+                                BibleListItem.VerseItem(
+                                    book,
+                                    chapter,
+                                    v.verse
+                                )
+                            )
                         }
                     }
                 }
             }
         }
+
         return result
     }
 
     fun getBookPosition(bookName: String): Int {
-        return items.indexOfFirst { it is BibleListItem.BookItem && it.name == bookName }
+        return items.indexOfFirst {
+            it is BibleListItem.BookItem && it.name == bookName
+        }
     }
 
     fun expandBookAt(bookName: String, chapter: Int) {
@@ -86,6 +98,7 @@ class BookAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         val view = LayoutInflater.from(parent.context)
             .inflate(android.R.layout.simple_list_item_1, parent, false)
+
         return when (viewType) {
             0 -> BookViewHolder(view)
             1 -> ChapterViewHolder(view)
@@ -94,67 +107,78 @@ class BookAdapter(
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        val context = holder.itemView.context  // Get context to use getString()
 
         val theme = SettingsManager.getThemeObject(holder.itemView.context)
 
         when (val item = items[position]) {
+
             is BibleListItem.BookItem -> {
-                (holder as BookViewHolder).textView.text = item.name
+                val vh = holder as BookViewHolder
+                vh.textView.text = item.name
+                vh.textView.setTextColor(theme.textColor)
                 holder.itemView.setBackgroundColor(theme.backgroundColor)
+
                 holder.itemView.setOnClickListener {
-                    if (expandedBooks.contains(item.name)) expandedBooks.remove(item.name)
-                    else expandedBooks.add(item.name)
+                    if (expandedBooks.contains(item.name)) {
+                        expandedBooks.remove(item.name)
+                    } else {
+                        expandedBooks.add(item.name)
+                    }
                     rebuildList()
                 }
-                (holder as BookViewHolder).textView.apply {
-                    text = item.name
-                    setTextColor(theme.textColor) // Force text to be black
-                }
             }
+
             is BibleListItem.ChapterItem -> {
-                (holder as ChapterViewHolder).textView.text = context.getString(R.string.chapter_title, item.chapter)
+                val vh = holder as ChapterViewHolder
+                vh.textView.text =
+                    holder.itemView.context.getString(R.string.chapter_title, item.chapter)
+
+                vh.textView.setTextColor(theme.textColor)
                 holder.itemView.setBackgroundColor(theme.backgroundColor)
+
                 holder.itemView.setOnClickListener {
                     val key = item.bookName to item.chapter
-                    if (expandedChapters.contains(key)) expandedChapters.remove(key)
-                    else expandedChapters.add(key)
+                    if (expandedChapters.contains(key)) {
+                        expandedChapters.remove(key)
+                    } else {
+                        expandedChapters.add(key)
+                    }
                     rebuildList()
                 }
-                (holder as ChapterViewHolder).textView.apply {
-                    text = context.getString(R.string.chapter_title, item.chapter)
-                    setTextColor(theme.textColor) // <-- Add this line
-                }
             }
-            is BibleListItem.VerseItem -> {
-                holder.itemView.setBackgroundColor(theme.backgroundColor)
-                val context = holder.itemView.context
-                val activity = context as? MainActivity ?: return
 
-                val isHighlighted = activity.highlightedVerses.contains(Triple(item.bookName, item.chapter, item.verseNumber))
+            is BibleListItem.VerseItem -> {
+                val vh = holder as VerseViewHolder
+
+                val isHighlighted =
+                    activity.highlightedVerses.contains(
+                        Triple(item.bookName, item.chapter, item.verseNumber)
+                    )
 
                 val spannable = SpannableString(item.verseNumber.toString())
+
                 if (isHighlighted) {
-                    spannable.setSpan(UnderlineSpan(), 0, spannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    spannable.setSpan(
+                        UnderlineSpan(),
+                        0,
+                        spannable.length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
                 }
-                (holder as VerseViewHolder).textView.text = spannable
+
+                vh.textView.text = spannable
+                vh.textView.setTextColor(theme.textColor)
+                holder.itemView.setBackgroundColor(theme.backgroundColor)
 
                 holder.itemView.setOnClickListener {
-                    if (activity.selectedBook == item.bookName && activity.selectedChapter == item.chapter) {
-                        // Always reload even if it's the same chapter
-                        activity.selectedVerse = item.verseNumber
-                        activity.displayChapter(item.bookName, item.chapter, item.verseNumber)
-                        activity.closeDrawer()
-                    } else {
-                        // New chapter
-                        activity.selectedVerse = item.verseNumber
-                        activity.displayChapter(item.bookName, item.chapter, item.verseNumber)
-                        activity.closeDrawer()
-                    }
-                }
-                (holder as VerseViewHolder).textView.apply {
-                    text = spannable
-                    setTextColor(theme.textColor)
+
+                    activity.selectedVerse = item.verseNumber
+                    activity.displayChapter(
+                        item.bookName,
+                        item.chapter,
+                        item.verseNumber
+                    )
+                    activity.closeDrawer()
                 }
             }
         }

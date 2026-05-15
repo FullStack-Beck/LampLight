@@ -23,10 +23,36 @@ import com.google.gson.Gson           // JSON parser
 import androidx.core.content.edit     // extension for SharedPreferences edit {}
 import androidx.core.content.ContextCompat // safe way to load colors
 import android.view.MotionEvent       // used for scroll/touch detection
+import androidx.appcompat.app.AlertDialog
 import androidx.core.view.GravityCompat // constants for drawer direction
 
 // ---------------- Main Activity -----------------
 class MainActivity : AppCompatActivity() {
+
+    //remove this later for better UI
+    private fun showVersionPicker() {
+        val versions = VersionManager.getVersions()
+
+        val names = versions.map { it.name }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Select Bible Version")
+            .setItems(names) { _, which ->
+                val selected = versions[which]
+
+                VersionManager.setCurrent(selected)
+
+                updateVersionButton()
+
+                // reload current chapter using new version
+                displayChapter(
+                    selectedBook ?: "Genesis",
+                    selectedChapter ?: 1,
+                    selectedVerse
+                )
+            }
+            .show()
+    }
 
     private var userScrolling = false
     // Flag: true when user actively drags screen, false when idle.
@@ -52,7 +78,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var drawerRecyclerView: RecyclerView     // Recycler list of books
 
     // This holds your parsed KJV Bible data
-    private lateinit var kjvData: BibleData
+    private val bibleRepo: BibleRepository
+        get() = VersionManager.getCurrent().repository
 
     // ---------------- Save reading progress ----------------
     // Saves the user's current book/chapter/verse into local storage (SharedPreferences).
@@ -101,7 +128,7 @@ class MainActivity : AppCompatActivity() {
         val scrollView = findViewById<ScrollView>(R.id.verse_scroll_view)
         val mainContent = findViewById<FrameLayout>(R.id.main_content)
 
-        val versesInChapter = kjvData.verses.filter { it.bookName == bookName && it.chapter == chapter }
+        val versesInChapter = bibleRepo.getVerses(bookName, chapter)
 
         val renderer = VerseRenderer(
             context = this,
@@ -167,19 +194,20 @@ class MainActivity : AppCompatActivity() {
     // ---------------- Drawer controls ----------------
     //close the drawer and collapse the lists inside of it
     fun closeDrawer() {
-        drawerLayout.closeDrawers()
-        // Delay collapse until drawer is actually closed
-        drawerLayout.addDrawerListener(object : DrawerLayout.DrawerListener {
+        val listener = object : DrawerLayout.DrawerListener {
             override fun onDrawerClosed(drawerView: View) {
                 val adapter = drawerRecyclerView.adapter as? BookAdapter
-                adapter?.collapseAll() // collapse expanded book lists
-                drawerLayout.removeDrawerListener(this) // Clean up listener
+                adapter?.collapseAll()
+                drawerLayout.removeDrawerListener(this)
             }
 
             override fun onDrawerSlide(drawerView: View, slideOffset: Float) {}
             override fun onDrawerOpened(drawerView: View) {}
             override fun onDrawerStateChanged(newState: Int) {}
-        })
+        }
+
+        drawerLayout.addDrawerListener(listener)
+        drawerLayout.closeDrawers()
     }
 
     // -------------------------- navigation buttons -------------------------
@@ -187,28 +215,21 @@ class MainActivity : AppCompatActivity() {
         val currentBook = selectedBook ?: return
         val currentChapter = selectedChapter ?: return
 
-        val chapters = kjvData.verses
-            .filter { it.bookName == currentBook }
-            .map { it.chapter }
-            .distinct()
-            .sorted()
-
+        val chapters = bibleRepo.getChapters(currentBook)
         val index = chapters.indexOf(currentChapter)
+
         if (index > 0) {
             displayChapter(currentBook, chapters[index - 1], 1, tempHighlight = false)
-        } else {
-            // Go to previous book
-            val books = kjvData.verses.map { it.bookName }.distinct()
-            val bookIndex = books.indexOf(currentBook)
-            if (bookIndex > 0) {
-                val prevBook = books[bookIndex - 1]
-                val prevChapters = kjvData.verses.filter { it.bookName == prevBook }
-                    .map { it.chapter }
-                    .distinct()
-                    .sorted()
-                displayChapter(prevBook, prevChapters.last(), 1, tempHighlight = false)
-            }
+            return
+        }
 
+        val books = bibleRepo.getBooks()
+        val bookIndex = books.indexOf(currentBook)
+
+        if (bookIndex > 0) {
+            val prevBook = books[bookIndex - 1]
+            val prevChapters = bibleRepo.getChapters(prevBook)
+            displayChapter(prevBook, prevChapters.last(), 1, tempHighlight = false)
         }
     }
 
@@ -216,28 +237,21 @@ class MainActivity : AppCompatActivity() {
         val currentBook = selectedBook ?: return
         val currentChapter = selectedChapter ?: return
 
-        val chapters = kjvData.verses
-            .filter { it.bookName == currentBook }
-            .map { it.chapter }
-            .distinct()
-            .sorted()
-
+        val chapters = bibleRepo.getChapters(currentBook)
         val index = chapters.indexOf(currentChapter)
+
         if (index < chapters.size - 1) {
             displayChapter(currentBook, chapters[index + 1], 1, tempHighlight = false)
-        } else {
-            // Optional: go to next book
-            val books = kjvData.verses.map { it.bookName }.distinct()
-            val bookIndex = books.indexOf(currentBook)
-            if (bookIndex < books.size - 1) {
-                val nextBook = books[bookIndex + 1]
-                val nextChapters = kjvData.verses.filter { it.bookName == nextBook }
-                    .map { it.chapter }
-                    .distinct()
-                    .sorted()
-                displayChapter(nextBook, nextChapters.first(), 1, tempHighlight = false)
-            }
+            return
+        }
 
+        val books = bibleRepo.getBooks()
+        val bookIndex = books.indexOf(currentBook)
+
+        if (bookIndex < books.size - 1) {
+            val nextBook = books[bookIndex + 1]
+            val nextChapters = bibleRepo.getChapters(nextBook)
+            displayChapter(nextBook, nextChapters.first(), 1, tempHighlight = false)
         }
     }
 
@@ -248,6 +262,15 @@ class MainActivity : AppCompatActivity() {
             applyTheme()
             displayChapter(selectedBook ?: return, selectedChapter ?: return, selectedVerse)
         }
+    }
+
+    private fun updateVersionButton() {
+        val version = VersionManager.getCurrent()
+
+        val versionText = findViewById<TextView>(R.id.version_title)
+        val versionIcon = findViewById<ImageView>(R.id.version_icon)
+
+        versionText.text = version.shortName
     }
 
     private fun applyTheme() {
@@ -387,7 +410,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnVersion.setOnClickListener {
-            Toast.makeText(this, "Version selector clicked", Toast.LENGTH_SHORT).show()
+            showVersionPicker()
         }
 
         // ---------------- Scroll behavior ----------------
@@ -455,9 +478,128 @@ class MainActivity : AppCompatActivity() {
 
         // Load KJV JSON
         val kjvJsonStream = assets.open("kjv.json")
-        kjvData = Gson().fromJson(InputStreamReader(kjvJsonStream), BibleData::class.java)
 
-        drawerRecyclerView.adapter = BookAdapter(kjvData)
+        val kjvData = Gson().fromJson(
+            InputStreamReader(kjvJsonStream),
+            BibleData::class.java
+        )
+
+        val kjvRepo = JsonBibleRepository(kjvData)
+
+        VersionManager.register(
+            BibleVersion(
+                name = "King James Version",
+                shortName = "KJV",
+                repository = kjvRepo
+            )
+        )
+        VersionManager.register(
+            BibleVersion("English Standard Version", "ESV", SqliteBibleRepository(this, "ESV_bible.sqlite"))
+        )
+        VersionManager.register(
+            BibleVersion("New Living Translation", "NLT", SqliteBibleRepository(this, "NLT_bible.sqlite"))
+        )
+        VersionManager.register(
+            BibleVersion("American King James Version", "AKJV", SqliteBibleRepository(this, "AKJV_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("Amplified Bible", "AMP", SqliteBibleRepository(this, "AMP_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("American Standard Version", "ASV", SqliteBibleRepository(this, "ASV_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("Bible in Basic English (Brenton?)", "BRG", SqliteBibleRepository(this, "BRG_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("Christian Standard Bible", "CSB", SqliteBibleRepository(this, "CSB_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("Easy-to-Read Version", "EHV", SqliteBibleRepository(this, "EHV_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("English Standard Version UK", "ESVUK", SqliteBibleRepository(this, "ESVUK_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("Geneva Bible", "GNV", SqliteBibleRepository(this, "GNV_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("God’s Word Translation", "GW", SqliteBibleRepository(this, "GW_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("International Standard Version", "ISV", SqliteBibleRepository(this, "ISV_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("Jubilee Bible 2000", "JUB", SqliteBibleRepository(this, "JUB_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("King James 21st Century Version", "KJ21", SqliteBibleRepository(this, "KJ21_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("Literal English Bible", "LEB", SqliteBibleRepository(this, "LEB_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("Modern English Version", "MEV", SqliteBibleRepository(this, "MEV_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("New American Standard Bible 1995", "NASB1995", SqliteBibleRepository(this, "NASB1995_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("New American Standard Bible (Updated)", "NASB", SqliteBibleRepository(this, "NASB_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("New English Translation", "NET", SqliteBibleRepository(this, "NET_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("New International Version", "NIV", SqliteBibleRepository(this, "NIV_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("New International Version UK", "NIVUK", SqliteBibleRepository(this, "NIVUK_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("New Life Version", "NLV", SqliteBibleRepository(this, "NLV_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("Names of God Bible", "NOG", SqliteBibleRepository(this, "NOG_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("New Revised Standard Version", "NRSV", SqliteBibleRepository(this, "NRSV_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("New Revised Standard Version Updated Edition", "NRSVUE", SqliteBibleRepository(this, "NRSVUE_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("World English Bible", "WEB", SqliteBibleRepository(this, "WEB_bible.sqlite"))
+        )
+
+        VersionManager.register(
+            BibleVersion("Young’s Literal Translation", "YLT", SqliteBibleRepository(this, "YLT_bible.sqlite"))
+        )
+        drawerRecyclerView.adapter = BookAdapter(bibleRepo, this)
+
 
         // ---------------- Load last read ----------------
         val prefs = getSharedPreferences("bible_prefs", MODE_PRIVATE)
@@ -466,6 +608,7 @@ class MainActivity : AppCompatActivity() {
         val lastVerse = if (prefs.contains("last_verse")) prefs.getInt("last_verse", 1) else null
 
         applyTheme()
+        updateVersionButton()
         // Display last chapter with applied settings
         displayChapter(lastBook, lastChapter, lastVerse)
     }
